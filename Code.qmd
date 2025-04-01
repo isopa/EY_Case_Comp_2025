@@ -1,0 +1,279 @@
+```{r, include = FALSE}
+rm(list = ls())
+library('readxl')
+library('ggplot2')
+library('cowplot')
+library('fpp3')
+knitr::opts_chunk$set(fig.height = 5)
+knitr::opts_chunk$set(fig.width = 15)
+options(digits=11)
+```
+
+```{r}
+removeOutliers <- function(data) {
+Q <- quantile(data, probs = c(0.25,0.75), na.rm = TRUE)
+iqr <- IQR(data)
+upper <- Q[2] + 1.5*iqr
+lower <- Q[1] - 1.5*iqr
+return(subset(data, data > lower & data < upper))
+}
+```
+
+```{r, Initial setup}
+Data <- read_excel('Clean_data.xlsx')
+num_industries <- 6
+I <- c("Accommodation and Hospitality", "Education", "Fishing and Agriculture", "Health and Community", "Property and Business Service", "Government Administration")
+ANH_df <- Data[Data$Industry == "Accommodation and Hospitality", ]
+EDU_df <- Data[Data$Industry == "Education", ]
+FNA_df <- Data[Data$Industry == "Fishing and Agriculture", ]
+HNC_df <- Data[Data$Industry == "Health and Community", ]
+PNB_df <- Data[Data$Industry == "Property and Business Service", ]
+GVA_df <- Data[Data$Industry == "Government Administration", ]
+Industries <- list(ANH_df, EDU_df, FNA_df, HNC_df, PNB_df, GVA_df)
+Num_Companies <- c()
+Num_Employees <- c()
+for (i in 1:num_industries) {
+    Num_Companies[i] <- nrow(Industries[[i]])
+}
+
+for (i in 1:num_industries) {
+    Num_Employees[i] <- sum(Industries[[i]][["Number of employees 2025"]])
+}
+
+ANH <- 1
+EDU <- 2
+FNA <- 3
+HNC <- 4
+PNB <- 5
+GVA <- 6
+
+OPERATING_EXPENSES <- 2400000
+UNFIT_RATE <- 0.7
+UNFIT_LENGTH <- 4/52 #in years
+BENEFIT <- 0.75
+
+# sum(Industries[[2]][, 'Number of employees 2025'])
+
+industry_plots <- list()
+industry_dfs <- list()
+devs <- c()
+df_for_pooki_takuki <- data(
+    claim_volume = c(1:4),
+    medical_cost = c(1:4),
+    avg_wage = c(1:4)
+    )
+
+for (i in 1:num_industries) {
+    K <- Industries[[i]]
+    # employees <- c()
+    # wages <- c()
+    # claims <- c()
+    # medical <- c()
+    # industry_plots[[i]] <- list()
+    industry_dfs[[i]] <- list()
+    
+    claims_volume_df <- data.frame(
+        Values = c(1:3),
+        Year = as.integer(c(1:3))
+    )
+    cost_df <- data.frame(
+        Values = c(1:3),
+        Year = c(1:3)
+    )
+    wage_df <- data.frame(
+        Values = c(1:3),
+        Year = c(1:3)
+    )
+    total_wage_df <- data.frame(
+        Values = c(1:3),
+        Year = c(1:3)
+    )
+    total_employees_df <- data.frame(
+        Values = c(1:3),
+        Year = c(1:3)
+    )
+    total_cost_df <- data.frame(
+        Values = c(1:3),
+        Year = c(1:3)
+    )
+    
+    for (j in 1:3) {
+        year <- 2022 + j
+        w <- paste(year, "wages")
+        e <- paste("Number of employees", year)
+        c <- paste(year, "number of claims")
+        m <- paste(year, "medical costs")
+        
+        total_wages <- sum(K[, w])
+        total_employees <- sum(K[, e])
+        total_claims <- sum(K[, c])
+        total_medical_costs <- sum(K[, m])
+        
+        plot(K[[w]]/K[[e]]) + abline(h = median(K[[w]]/K[[e]])) + abline(h=total_wages/total_employees)
+        
+        claims_volume_df$Values[j] <- total_claims
+        cost_df$Values[j] <- total_medical_costs/total_claims
+        wage_df$Values[j] <- total_wages/total_employees
+        
+        total_employees_df$Values[j] <- total_employees
+        total_wage_df$Values[j] <- total_wages
+        total_cost_df$Values[j] <- total_medical_costs
+    }
+    
+    industry_dfs[[i]][[1]] = claims_volume_df
+    industry_dfs[[i]][[2]] = cost_df
+    industry_dfs[[i]][[3]] = wage_df
+    industry_dfs[[i]][[4]] = total_wage_df
+    industry_dfs[[i]][[5]] = total_employees_df
+    industry_dfs[[i]][[6]] = total_cost_df
+    
+    # devs[i] <- sd(claims_df$Claims)
+}
+
+colors <- c("I2" = "blue", "I3" = "red", "I4"="green", "I5"="orange", "I6"="pink")
+color_names <- c("I2", "I3", "I4", "I5", "I6")
+ylabs <- c("Total Claims Per Industry", "Avg Medical Cost Per Claim", "Avg Wage")
+plots <- list()
+
+for(i in 1:3) {
+    plot <-  ggplot(data = industry_dfs[[1]][[i]], aes(x=Year + 2022, y=Values)) + geom_line()
+    for(j in 2:num_industries) {
+        plot <- plot + geom_line(data = industry_dfs[[j]][[i]], color = colors[j-1])
+    }
+    
+    plots[[i]] <- plot + labs(y=ylabs[i]) + theme(panel.grid.major = element_blank()) + scale_x_continuous(breaks = c(2023, 2024, 2025))
+}
+
+plot_grid(plotlist=plots, ncol=3)
+```
+
+```{r Q1}
+
+total_claims_models <- list()
+wage_models <- list()
+
+projected_cost <- c() # per claim
+projected_claims_volume <- c()
+projected_wage <- c()
+
+for (i in 1:num_industries) {
+    claims_volume_df <- industry_dfs[[i]][[1]]
+    cost_df <- industry_dfs[[i]][[2]]
+    wage_df <- industry_dfs[[i]][[3]]
+    
+    total_claims_models[[i]] <- lm(log(Values) ~ Year, data = claims_volume_df)
+    # glm(formula = Values ~ Year, data = claims_volume_df,
+    #                                family = poisson(link = "log")) 
+    
+    wage_models[[i]] <- lm(Values ~ Year, data = wage_df)
+    
+    projected_cost[i] <- mean(cost_df$Values)
+    projected_claims_volume[i] <- exp(predict(total_claims_models[[i]], 
+                                          newdata = data.frame(Year = c(4))
+                                      )
+                                  )
+    projected_wage[i] <- predict(wage_models[[i]],
+                                 newdata = data.frame(Year = c(4))
+                                 )
+    
+    print(summary(total_claims_models[[i]]))
+    plot(claims_volume_df$Year, log(claims_volume_df$Values)) + abline(total_claims_models[[i]])
+}
+
+c1 <- Data[["2025 number of claims"]]
+c2 <- Data[["2025 medical costs"]]/c1
+mean(c1)
+mean(c2)
+mean(c1*c2)
+cov(c1,c2)
+# Correlation between no. of claims and medical costs
+cat("Correlation between no. claims and medical costs:", cov(c1,c2)/(sd(c1)*sd(c2)))
+
+projected_cost
+projected_claims_volume
+projected_wage
+
+projected_total_cost <- round(projected_cost, digits = 2) * ceiling(projected_claims_volume)
+projected_total_cost
+projected_benefits <- ceiling(projected_claims_volume) * UNFIT_RATE * BENEFIT * UNFIT_LENGTH * projected_wage
+projected_benefits
+operating_exp <- rep(OPERATING_EXPENSES/6)
+operating_exp
+
+industry_premium <- projected_total_cost+projected_benefits+operating_exp
+industry_premium
+
+Num_Companies
+
+Naive_Premium <- industry_premium/Num_Companies
+Naive_Premium
+
+
+projected_BE_premium <- (projected_total_cost + 
+        ceiling(projected_claims_volume) * UNFIT_RATE * BENEFIT * UNFIT_LENGTH * projected_wage)/Num_Companies + 
+        OPERATING_EXPENSES/sum(Num_Companies)
+
+projected_BE_premium_per_industry <- (projected_total_cost + 
+        projected_claims_volume * UNFIT_RATE * BENEFIT * UNFIT_LENGTH * projected_wage) + 
+        OPERATING_EXPENSES/num_industries
+
+
+projected_BE_premium
+projected_BE_premium_per_industry
+
+Total_wage_ANH_2025 <- sum(ANH_df[, "2025 wages"])
+OBH_wage_2025  <- ANH_df[1, "2025 wages"][[1]]
+cat("Weight for Ocean Breeze Hotel: ", (OBH_wage_2025/Total_wage_ANH_2025 * 100), "%")
+``` 
+
+```{r Q2}
+log_m_2025 <- removeOutliers(log(Data[["2025 medical costs"]])) # medical cost per company
+log_m_2024 <- removeOutliers(log(Data[["2024 medical costs"]])) # medical cost per company
+log_m_2023 <- removeOutliers(log(Data[["2023 medical costs"]])) # medical cost per company
+sd_2025 <- sd(log_m_2025)
+sd_2024 <- sd(log_m_2024)
+sd_2023 <- sd(log_m_2023)
+
+sd_2025
+sd_2024
+sd_2023
+
+n <- nrow(Data)
+
+frame_2025 <- data.frame(log_m_2025)
+ggplot(frame_2025, aes(sample = log_m_2025)) + geom_qq() + geom_qq_line() + theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank()) + labs(x = "Standard Quantiles", y = "Data Quantiles")
+
+lower_s <- (n-1)*sd_2025^2/qchisq(0.975, df = n-1)
+upper_s <- (n-1)*sd_2025^2/qchisq(0.025, df = n-1)
+
+# Lower bound s.d.
+sqrt(lower_s)
+# Upper bound s.d.
+sqrt(upper_s)
+# Lower bound loading factor with 5% alpha
+f1 <- exp(0.05  * sqrt(lower_s))
+# Upper bound loading factor
+f2 <- exp(0.05  * sqrt(upper_s))
+
+f1
+f2
+
+# Risk loaded medical costs
+f1 * projected_total_cost
+f2 * projected_total_cost
+
+# Risk adjusted premiums
+p1 <- f1 * projected_total_cost + projected_benefits + operating_exp
+p2 <- f2 * projected_total_cost + projected_benefits + operating_exp
+p1
+p2
+(pi+p2)/2
+
+# Risk adjusted premium per employee in each industry
+p1/Num_Employees
+p2/Num_Employees
+```
